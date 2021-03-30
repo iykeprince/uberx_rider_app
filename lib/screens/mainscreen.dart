@@ -2,13 +2,16 @@ import 'dart:async';
 
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_geofire/flutter_geofire.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:rider_app/assistants/assistant_method.dart';
+import 'package:rider_app/assistants/geofire_assistant.dart';
 import 'package:rider_app/configMap.dart';
 import 'package:rider_app/data_handler/app_data.dart';
 import 'package:rider_app/models/direction_detail.dart';
+import 'package:rider_app/models/nearby_available_driver.dart';
 import 'package:rider_app/screens/search_screen.dart';
 import 'package:rider_app/widgets/divider.dart';
 import 'package:geolocator/geolocator.dart';
@@ -45,8 +48,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   double searchContainerHeight = 300;
 
   bool drawerOpen = true;
+  bool nearbyAvailableDriverKeysLoaded = false;
 
   DatabaseReference rideRequestRef;
+
+  BitmapDescriptor nearbyIcon;
 
   @override
   void initState() {
@@ -88,7 +94,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   void cancelRideRequest() async {
     rideRequestRef.remove();
-
   }
 
   void displayRequestRideContainer() {
@@ -146,6 +151,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     String address =
         await AssistantMethod.searchCoordinateAddress(position, context);
     print("This is your address :: " + address);
+
+    initGeoFireListeners();
   }
 
   static final CameraPosition _kGooglePlex = CameraPosition(
@@ -161,6 +168,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    createIconMarker();
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(title: Text('Main Screen')),
@@ -749,6 +757,98 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       setState(() {
         circleSet.add(pickUpCircle);
         circleSet.add(dropOffCircle);
+      });
+    }
+  }
+
+  void initGeoFireListeners() {
+    Geofire.initialize("availableDrivers");
+
+    Geofire.queryAtLocation(
+            currentPosition.latitude, currentPosition.longitude, 15)
+        .listen((map) {
+      print(map);
+      if (map != null) {
+        var callBack = map['callBack'];
+
+        //latitude will be retrieved from map['latitude']
+        //longitude will be retrieved from map['longitude']
+
+        switch (callBack) {
+          case Geofire.onKeyEntered:
+            NearbyAvailableDriver nearbyAvailableDriver =
+                NearbyAvailableDriver();
+            nearbyAvailableDriver.key = map['key'];
+            nearbyAvailableDriver.latitude = map['latitude'];
+            nearbyAvailableDriver.longitude = map['longitude'];
+            GeofireAssistant.nearbyAvailableDrivers.add(nearbyAvailableDriver);
+            if (nearbyAvailableDriverKeysLoaded) {
+              updateAvailableDriverOnMap();
+            }
+            break;
+
+          case Geofire.onKeyExited:
+            GeofireAssistant.removeFromNearbyAvailableDrivers(map['key']);
+            updateAvailableDriverOnMap();
+            break;
+
+          case Geofire.onKeyMoved:
+            // Update your key's location
+            NearbyAvailableDriver nearbyAvailableDriver =
+                NearbyAvailableDriver();
+            nearbyAvailableDriver.key = map['key'];
+            nearbyAvailableDriver.latitude = map['latitude'];
+            nearbyAvailableDriver.longitude = map['longitude'];
+            GeofireAssistant.updateNearbyAvailableDriverLocation(
+                nearbyAvailableDriver);
+            updateAvailableDriverOnMap();
+            break;
+
+          case Geofire.onGeoQueryReady:
+            updateAvailableDriverOnMap();
+            break;
+        }
+      }
+
+      setState(() {});
+    });
+  }
+
+  void updateAvailableDriverOnMap() {
+    setState(() {
+      markerSet.clear();
+    });
+
+    Set<Marker> tMarkers = Set<Marker>();
+    for (NearbyAvailableDriver driver
+        in GeofireAssistant.nearbyAvailableDrivers) {
+      LatLng driverAvailablePosition =
+          LatLng(driver.latitude, driver.longitude);
+
+      Marker marker = Marker(
+        markerId: MarkerId('driver${driver.key}'),
+        position: driverAvailablePosition,
+        icon: nearbyIcon,
+        rotation: AssistantMethod.createRandomNumber(360),
+      );
+
+      tMarkers.add(marker);
+    }
+    setState(() {
+      markerSet = tMarkers;
+    });
+  }
+
+  void createIconMarker() {
+    if (nearbyIcon == null) {
+      ImageConfiguration imageConfiguration = createLocalImageConfiguration(
+        context,
+        size: Size(2, 2),
+      );
+      BitmapDescriptor.fromAssetImage(
+              imageConfiguration, "assets/images/car_ios.png")
+          .then((value) {
+        nearbyIcon = value;
       });
     }
   }
